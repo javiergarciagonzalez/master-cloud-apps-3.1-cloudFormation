@@ -1,0 +1,145 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "EC2 and RDS template for deploying a java web application"
+
+
+Parameters:
+  AmiID:
+    Description: "AMI ID that EC2 instance will use"
+    Type: String
+    Default: ami-013f17f36f8b1fefb # Ubuntu 18.04LTS amd64 us-east-1
+    AllowedPattern: "^ami-[a-zA-Z0-9]{17}$"
+  DBPassword:
+    Description: "Database password"
+    Type: String
+    NoEcho: true
+    MinLength: 8
+  BucketName:
+    Description: "Name for the S3 bucket that will be created"
+    Type: String
+    Default: bucketpractica32mastercloudappsjaviergarciagonzalez
+  JarURL:
+    Description: "URL for downloading app jar file"
+    Type: String
+
+
+Resources:
+  IAMRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      Description: "Gives full access to RDS and S3"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Principal: 
+              Service: 
+                - "ec2.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: "IAMRolePolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action: 
+                  - "rds:*"
+                  - "s3:*"
+                Resource: "*"
+  InstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      Roles:
+        - !Ref "IAMRole"
+
+  s3Bucket:
+    Type: AWS::S3::Bucket
+    DependsOn: IAMRole
+    Properties:
+      BucketName: !Ref BucketName
+      AccessControl: PublicRead
+
+  rdsInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceClass: "db.t2.micro"
+      AllocatedStorage: 10
+      AllowMajorVersionUpgrade: false
+      AutoMinorVersionUpgrade: true
+      DBInstanceIdentifier: practica2DB
+      DBName: practica2DB
+      Engine: mysql
+      EngineVersion: 8.0
+      MasterUsername: admin
+      MasterUserPassword: !Ref DBPassword
+      MultiAZ: false
+      PubliclyAccessible: false
+      StorageEncrypted: false
+      VPCSecurityGroups:
+        - !GetAtt rdsSecurityGroup.GroupId
+      Tags:
+        - Key: Name
+          Value: practica2DB
+
+  rdsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "SG for MySQL RDS"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '3306'
+          ToPort: '3306'
+          SourceSecurityGroupName: !Ref ec2SecurityGroup
+
+  ec2Instance:
+    Type: AWS::EC2::Instance
+    DependsOn: rdsInstance
+    Properties:
+      KeyName: Practica32
+      ImageId: !Ref AmiID
+      IamInstanceProfile: !Ref InstanceProfile
+      InstanceType: "t2.micro"
+      Monitoring: true
+      SecurityGroups:
+        - !Ref ec2SecurityGroup
+      UserData:
+        Fn::Base64:
+          Fn::Sub:
+            - |
+              #!/bin/bash -ex
+              sudo apt-get update && sudo apt-get install -y openjdk-11-jre
+              wget ${URL}
+              BUCKET_NAME=${bucket_name} REGION=${AWS::Region} RDS_DATABASE=practica2DB RDS_ENDPOINT=${rds_endpoint} RDS_USER=admin RDS_PASS=${Pass} java -jar app.jar --cloud.aws.rds.practica2DB.password=${Pass} --spring.profiles.active=production 
+            - Pass: !Ref DBPassword
+              URL: !Ref JarURL
+              bucket_name: !Ref BucketName
+              rds_endpoint: !GetAtt rdsInstance.Endpoint.Address
+      Tags:
+        - Key: cf-practica2-ec2
+          Value: practica2
+
+  ec2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: spring-8080-8443
+      GroupDescription: "SG for Java web app with ingress ports 8080 & 8443"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '8080'
+          ToPort: '8080'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '8443'
+          ToPort: '8443'
+          CidrIp: 0.0.0.0/0
+
+
+Outputs:
+  WebSiteURL:
+    Value:
+      !Join
+        - ''
+        - - "http://"
+          - !GetAtt ec2Instance.PublicDnsName
+          - ":8443/"
+    Description: "Practica 2 - Java app"
