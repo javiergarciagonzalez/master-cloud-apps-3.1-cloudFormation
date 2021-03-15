@@ -55,6 +55,7 @@ Resources:
   s3Bucket:
     Type: AWS::S3::Bucket
     DependsOn: IAMRole
+    DeletionPolicy: Delete
     Properties:
       BucketName: !Ref BucketName
       AccessControl: PublicRead
